@@ -1,0 +1,11 @@
+*.hdf5
+*.bed
+*.bam
+*.pk
+*.h5
+*.bai
+*.txt
+*.csv
+*.json
+*.png
+
