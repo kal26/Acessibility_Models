@@ -16,7 +16,7 @@ atac_path = '/home/kal/K27act_models/GM_data/ATAC/atac_average.hdf5'
 atac = h5py.File(atac_path, 'r')
 
 # make a generator
-def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=True):
+def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=True, log=False):
     assert len(peaks) > 1
     
     # stratify the data
@@ -47,9 +47,9 @@ def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=Tru
         for i, row in d.iterrows():
             for j in row:
                 idx=j[0]
-                yield get_sample(peaks.iloc[idx])
+                yield get_sample(peaks.iloc[idx], log=log)
                 
-def get_sample(row, genome=None, verb=False):
+def get_sample(row, genome=None, log=False, verb=False):
     if genome==None:
         genome=genome19
     try:
@@ -61,11 +61,13 @@ def get_sample(row, genome=None, verb=False):
     atac_counts = atac[row['chr']][row['start']:row['end']]
     # we will train on [atac, one_hot DNA]
     both = np.insert(nucs.astype(np.float32), 0, atac_counts, axis=1)
-    return both, row['score']
+    if log:
+        return both, np.log2(row['score'] + 1)
+    else:
+        return both, row['score']
 
-
-def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True):
-    d = datagen(peaks, num_groups=num_groups, mode=mode, shuffle=shuffle)
+def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True, log=False):
+    d = datagen(peaks, num_groups=num_groups, mode=mode, shuffle=shuffle, log=log)
     test_data, test_score = next(d)
     while True:
         X = np.empty((batch_size, test_data.shape[0], test_data.shape[1]))
