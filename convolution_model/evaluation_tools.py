@@ -346,7 +346,40 @@ class ATACmodel(object):
         return iterate_op 
 
 
-def snv_gen(peaks, genome, alt=False):
+    def predict_snv(model, peaks, genome=None, act=False, seq_length=1024):
+        """Predict from a bed file with chr, position, refAllele, altAllele.
+  
+        Arguments:
+            peaks -- the bed file in pd table form.
+        Keywords:
+            genome -- default is hg19.
+        Outputs:
+            refpreds -- predictions for each row with reference allele. 
+            altpreds -- predictions for each row with alternate allele. 
+        """
+        # get the genome and bed file regions
+        if genome == None:
+            genome = ucscgenome.Genome('/home/kal/.ucscgenome/hg19.2bit')
+        # predict over the rows
+        refpreds = []
+        peaks['end'] = peaks['refend']
+        batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=False, seq_length=seq_length), fillvalue=np.zeros((seq_length, 5)))
+        for batch in batchgen:
+            if batch.shape == (32, seq_length, 5):
+                refpreds.append(model.predict_on_batch(batch))
+        refpreds = np.asarray(refpreds).flatten()[:len(peaks)]
+
+        altpreds = []
+        peaks['end'] = peaks['altend']
+        batchgen = train_TFmodel.filled_batch(snv_gen(peaks, genome, alt=True, seq_length=seq_length), fillvalue=np.zeros((seq_length, 5)))
+        for batch in batchgen:
+            if batch.shape == (32, seq_length, 5):
+                altpreds.append(model.predict_on_batch(batch))
+        altpreds = np.asarray(altpreds).flatten()[:len(peaks)]
+        return refpreds, altpreds
+
+
+def snv_gen(peaks, genome, alt=False, seq_length=1024):
     """Generate sequnces from snv data.
     
     Arguments:
@@ -357,37 +390,25 @@ def snv_gen(peaks, genome, alt=False):
     Returns:
         seq -- sequence with the alternate or refernce allele, centered around the position. """
     for index, row in peaks.iterrows():
-        if row.position > 128:
-            seq = atac_seq.encode_to_onehot(genome[row.chr][row.position-128:row.position+128])
+        try:
+            seq = datagen.get_sample(row, genome=genome)[0]
             if alt:
-                seq[128] = atacseq.encode_to_onehot(row.altAllele.lower())
+                new_seq = np.insert(sequence.encode_to_onehot(row.altAllele.lower()), 0, seq[seq_length//2:seq_length//2+len(row.altAllele)][:,0], axis=1)
+                part_seq = np.append(seq[:seq_length//2], new_seq, axis=0)
+                seq = np.append(part_seq, seq[seq_length//2+len(row.refAllele):], axis=0) 
             else:
-                seq[128] = atacseq.encode_to_onehot(row.refAllele.lower())
-        else:
-            # sequence too close to begining
-            seq = atacseq.encode_to_onehot(genome[row.chr][0:256])
-            if alt:
-                seq[row.position] = atacseq.encode_to_onehot(row.altAllele.lower())
-            else:
-                seq[row.position] = atacseq.encode_to_onehot(row.refAllele.lower())
-        if seq.shape != (256, 4):
-            # seq too close to end?
-            print('Sequence at ' +str(row.chr) + ' ' + str(row.position) + ' is too short!')
-            offset = 0
-            while seq.shape != (256, 4) and offset < 128:
-                offset += 1
-                seq = atacseq.encode_to_onehot(genome[row.chr][row.position-128-offset:row.position+128-offset])
-            if alt:
-                seq[128-offset] = atacseq.encode_to_onehot(row.altAllele.lower())
-            else:
-                seq[128-offset] = atacseq.encode_to_onehot(row.refAllele.lower())
-        if (row.refAllele).lower() != (genome[row.chr][row.position]).lower():
-             raise IndexError('Reference allele does not match reference genome')
-        if seq.shape == (256, 4):
+                new_seq = np.insert(sequence.encode_to_onehot(row.refAllele.lower()), 0, seq[seq_length//2:seq_length//2+len(row.refAllele)][:,0], axis=1)
+                part_seq = np.append(seq[:seq_length//2], new_seq, axis=0)
+                seq = np.append(part_seq, seq[seq_length//2+len(row.refAllele):], axis=0)
+            if (row.refAllele).lower()[0] != (genome[row.chr][row.position]).lower():
+                print('Should be {}'.format(genome[row.chr][row.position].lower()))
+                print('Actually is {}'.format(row.refAllele.lower()))
+                print('Alternate is {}'.format(row.altAllele.lower()))
+                raise IndexError('Reference allele does not match reference genome')
             yield seq
-        else:
-            print('Sequence at ' +str(row.chr) + ' ' + str(row.position) + ' couldn\'t be fixed')
-
+        except IndentationError as e:
+            print(e)
+            print(row)
 
 def group_stats(key, h1, h2, h3):
     # Summarize history for accuracy
