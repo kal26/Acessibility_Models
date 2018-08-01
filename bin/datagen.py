@@ -92,9 +92,9 @@ def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True, lo
 
 def simple_gen(peaks, atac_only=False, seq_only=False):
     for index, row in peaks.iterrows():
-        yield datagen.get_sample(row, atac_only=atac_only, seq_only=seq_only)
+        yield get_sample(row, atac_only=atac_only, seq_only=seq_only)
         
-def simple_batch(peaks, batch_size=32. atac_only=False, seq_only=False):
+def simple_batch(peaks, batch_size=32, atac_only=False, seq_only=False):
     d = simple_gen(peaks, atac_only=atac_only, seq_only=seq_only)
     while True:
         if atac_only:
