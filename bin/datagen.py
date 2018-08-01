@@ -13,10 +13,10 @@ genome19 = ucscgenome.Genome('/home/kal/.ucscgenome/hg19.2bit')
 
 # load in ATAC data
 atac_path = '/home/kal/K27act_models/GM_data/ATAC/atac_average.hdf5'
-atac = h5py.File(atac_path, 'r')
+atac_data = h5py.File(atac_path, 'r')
 
 # make a generator
-def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=True, log=False):
+def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=True, log=False, atac_only=False, seq_only=False):
     assert len(peaks) > 1
     
     # stratify the data
@@ -34,7 +34,7 @@ def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=Tru
             
         quant_idx[i] = subset_peaks[(subset_peaks[split_column] > min_fold) & (subset_peaks[split_column] < max_fold)].index.values  
       
-    # yeild the values
+    # yield the values
     while True:
         # shuffle the samples
         if shuffle:
@@ -47,9 +47,9 @@ def datagen(peaks, num_groups=5, mode='train', split_column='score', shuffle=Tru
         for i, row in d.iterrows():
             for j in row:
                 idx=j[0]
-                yield get_sample(peaks.iloc[idx], log=log)
+                yield get_sample(peaks.iloc[idx], log=log, atac_only=atac_only, seq_only=seq_only)
                 
-def get_sample(row, genome=None, log=False, verb=False):
+def get_sample(row, genome=None, log=False, verb=False, atac_only=False, seq_only=False):
     if genome==None:
         genome=genome19
     try:
@@ -58,20 +58,27 @@ def get_sample(row, genome=None, log=False, verb=False):
         if verb:
             print('passed sample without nucs')
         nucs = sequence.encode_to_onehot(genome[row['chr']][row['start']:row['end']])
-    atac_counts = atac[row['chr']][row['start']:row['end']]
-    # we will train on [atac, one_hot DNA]
-    try:
-        both = np.insert(nucs.astype(np.float32), 0, atac_counts, axis=1)
-    except ValueError as e:
-        print(row)
-        raise(e)
-    if log:
-        return both, np.log2(row['score'] + 1)
+    if not seq_only:
+        atac_counts = atac_data[row['chr']][row['start']:row['end']]
+        if not atac_only:
+            # we will train on [atac, one_hot DNA]
+            try:
+                out = np.insert(nucs.astype(np.float32), 0, atac_counts, axis=1)
+            except ValueError as e:
+                print(row)
+                raise(e)
+        else:
+            out = np.expand_dims(atac_counts, axis=2)
     else:
-        return both, row['score']
+        out = nucs
+    # return relevant information
+    if log:
+        return out, np.log2(row['score'] + 1)
+    else:
+        return out, row['score']
 
-def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True, log=False):
-    d = datagen(peaks, num_groups=num_groups, mode=mode, shuffle=shuffle, log=log)
+def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True, log=False, atac_only=False, seq_only=False):
+    d = datagen(peaks, num_groups=num_groups, mode=mode, shuffle=shuffle, log=log, atac_only=atac_only, seq_only=seq_only)
     test_data, test_score = next(d)
     while True:
         X = np.empty((batch_size, test_data.shape[0], test_data.shape[1]))
@@ -82,3 +89,23 @@ def batch_gen(peaks, num_groups=5, batch_size=32, mode='train', shuffle=True, lo
             y[i]=score
         yield X, y
 
+
+def simple_gen(peaks, atac_only=False, seq_only=False):
+    for index, row in peaks.iterrows():
+        yield datagen.get_sample(row, atac_only=atac_only, seq_only=seq_only)
+        
+def simple_batch(peaks, batch_size=32. atac_only=False, seq_only=False):
+    d = simple_gen(peaks, atac_only=atac_only, seq_only=seq_only)
+    while True:
+        if atac_only:
+            X = np.empty((batch_size, 1024, 1))
+        elif seq_only:
+            X = np.empty((batch_size, 1024, 4))
+        else:
+            X = np.empty((batch_size, 1024, 5))
+        y = np.empty((batch_size))
+        for i in range(batch_size):
+            inputs, score = next(d)
+            X[i]=inputs
+            y[i]=score
+        yield X, y
