@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import precision_recall_curve, roc_curve
 import pr_gain
+import os
 
 # evaluation and comparison tools for ml models
 
 def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines={}, kbaselines={}, logkbaselines={}, 
-                   fmls={}, kmls={}, logkmls={}, batch_size=32):
+                   fmls={}, kmls={}, logkmls={}, batch_size=32, save_dir={}):
     fpreds={}
     kpreds={}
     logkpreds={}
@@ -96,6 +97,10 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
             ax2.hexbin(peaks['fold_change'], row['fold_change'], bins='log', extent=(-6, 6, -6, 6))
         #    f.subplots_adjust(left=0.15, top=0.95)
             plt.show()
+            try:
+                f.savefig(os.path.join(save_dir[name], 'hexbin.png'))
+            except KeyError as e:
+                print(e)
 
     # color stuff
     prop_cycle = plt.rcParams['axes.prop_cycle']
@@ -116,13 +121,13 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
         for name, row in predframe.iterrows():
              predframe.at[name, 'fmse'] = np.mean((peaks['fold_change'] - row['fold_change']) **2)
              predframe.at[name, 'fmae'] = np.mean(abs(peaks['fold_change'] - row['fold_change']))
-             predframe.at[name, 'kmse'] = np.mean((peaks['k27act'] - row['k27act']) **2)
-             predframe.at[name, 'kmae'] = np.mean(abs(peaks['k27act'] - row['k27act']))
+             predframe.at[name, 'kmse'] = np.mean((peaks['logk27act'] - row['logk27act']) **2)
+             predframe.at[name, 'kmae'] = np.mean(abs(peaks['logk27act'] - row['logk27act']))
 
         barlist = axes[0][0].bar(range(len(predframe['kmse'])), predframe['kmse'])
         for i in range(len(barlist)):
             barlist[i].set_color(colors[i])
-        axes[0][0].legend(barlist, predframe.keys(), loc=4) 
+        axes[0][0].legend(barlist, predframe.index, loc=4) 
         barlist = axes[1][0].bar(range(len(predframe['fmse'])), predframe['fmse'])
         for i in range(len(barlist)):
              barlist[i].set_color(colors[i])
@@ -133,6 +138,12 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
         for i in range(len(barlist)):
             barlist[i].set_color(colors[i])
         plt.show()
+        for name in predframe.index:
+            try:
+                f.savefig(os.path.join(save_dir[name], 'errors.png'))
+            except KeyError as e:
+                print(e)
+
 
     if 'pr' in graph_list:
         prop_pos=sum(peaks['fold_change']>0)/len(peaks)
@@ -154,6 +165,12 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
             a.set_ylim([0.0, 1.05])
             a.set_xlim([0.0, 1.0])
         plt.show()
+        for name in predframe.index:
+            try:
+                f.savefig(os.path.join(save_dir[name], 'prcurve.png'))
+            except KeyError as e:
+                print(e)
+
 
     if 'roc' in graph_list:
         for name, row in predframe.iterrows():
@@ -167,5 +184,10 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
         plt.legend()
         plt.title('Fold-Change Direction ROC Curve')
         plt.show()
+        for name in predframe.index:
+            try:
+                f.savefig(os.path.join(save_dir[name], 'roc.png'))
+            except KeyError as e:
+                print(e)
 
     return predframe

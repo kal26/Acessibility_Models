@@ -108,4 +108,4 @@ def simple_batch(peaks, batch_size=32, atac_only=False, seq_only=False):
             inputs, score = next(d)
             X[i]=inputs
             y[i]=score
-        yield X, y
+        yield np.asarray(X), y
