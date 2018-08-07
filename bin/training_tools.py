@@ -49,8 +49,7 @@ class ChangeLR(Callback):
             K.set_value(self.model.optimizer.lr, self.new_lrs[self.epochs.index(epoch)])
             print("\n\nLR CHANGE TO {}\n\n".format(self.new_lrs[self.epochs.index(epoch)]))
 
-def train_model(out_dir, model_function, peaks, model_string, vpe=2, opt=Adam(lr=1e-04), num_epochs=5, batch_size=32, 
-                lr_sched=([0,5], [1e-04, 1e-05]), use_lasso=False, atac_only=False, seq_only=False):
+def train_model(out_dir, model_function, peaks, model_string, vpe=3, opt=Adam(lr=1e-04), num_epochs=10, batch_size=32, lr_sched=([0,5], [1e-03, 1e-05]), use_lasso=False, atac_only=False, seq_only=False, patience=1, args=[]):
 
     # facts about the data
     num_training_samples = len(peaks[(peaks.chr != 'chr8')])
@@ -76,16 +75,16 @@ def train_model(out_dir, model_function, peaks, model_string, vpe=2, opt=Adam(lr
     
     # get the model
     if use_lasso:
-        model, grads = model_function(get_grads=True, atac_only=atac_only, seq_only=seq_only, batch_size=batch_size)
+        model, grads = model_function(get_grads=True, atac_only=atac_only, seq_only=seq_only, batch_size=batch_size, args=args)
     else:
-        model = model_function(atac_only=atac_only, seq_only=seq_only, batch_size=batch_size)
+        model = model_function(atac_only=atac_only, seq_only=seq_only, batch_size=batch_size, args=args)
         
     # compile model
     if use_lasso:
         model.compile(loss=lasso.get_lwg(grads), metrics=['mean_absolute_error', lasso.get_gp(grads)], optimizer=opt)
     else:
         model.compile(loss='mean_absolute_error', metrics=['mean_absolute_error'], optimizer=opt)
-    early_stop = EarlyStopping(monitor='val_loss', patience=vpe)
+    early_stop = EarlyStopping(monitor='val_loss', patience=patience*vpe)
     filepath = os.path.join(weights_path, 'weights-{epoch:02d}-{val_loss:.3f}.hdf5')
     checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
 
@@ -115,3 +114,4 @@ def train_model(out_dir, model_function, peaks, model_string, vpe=2, opt=Adam(lr
     os.rename(temp_path, out_path)
     print('Model moved to ' + out_path)
 
+    return out_path

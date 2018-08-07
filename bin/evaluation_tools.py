@@ -34,7 +34,7 @@ import atacseq
 #some batch forming methods
 def blank_batch(seq, batch_size=32):
      """Make a batch blank but for the given sequence in position 0."""
-     batch = np.zeros((batch_size, seq.shape[0], seq.shape[1]), dtype=np.uint8)
+     batch = np.zeros((batch_size, seq.shape[0], seq.shape[1]))
      batch[0] = seq
      return batch
 
@@ -44,7 +44,7 @@ def grouper(iterable, n, fillvalue=None):
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
 
-def filled_batch(iterable, batch_size=32, fillvalue=np.asarray([False]*256*4).reshape(256,4)):
+def filled_batch(iterable, batch_size=32, fillvalue=np.asarray([False]*1024*5).reshape(1024,5)):
     """Make batches of the given size until running out of elements, then buffer."""
     groups = grouper(iterable, batch_size, fillvalue=fillvalue)
     while True:
@@ -87,7 +87,7 @@ def gumbel_softmax(logits, temperature, hard=False):
 class ATACmodel(object):
     """Acessibility keras model."""
 
-    def __init__(self, full_path, output_path=None, model_path=None):
+    def __init__(self, full_path, output_path=None, model_path=None, custom_dict={}):
         """Create a new model object.
         Arguments:
             model_path -- path to a trained mode's directory with
@@ -106,7 +106,7 @@ class ATACmodel(object):
             self.model_path = os.path.join(self.full_path, 'final_model.h5')
         else:
             self.model_path = model_path
-        self.model = load_model(self.model_path)
+        self.model = load_model(self.model_path, custom_objects=custom_dict)
         if output_path != None:
             self.out_path = output_path
         else:
@@ -434,23 +434,22 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
             print(e) 
             fpreds[key] = fbaselines[key].predict(peaks[['gc_frac','cpg_frac']])
         kpreds[key] = (2**(fpreds[key]))*(peaks['atac']+1)-1
-        logkpreds[key] = np.log2(kpreds[key].clip(0) + 1)
+        logkpreds[key] = np.log(kpreds[key].clip(0) + 1)
     for key in kbaselines:
         try:
            kpreds[key] = kbaselines[key].predict(peaks[['gc_frac','cpg_frac', 'atac']])
         except ValueError as e:
             print(e)
             kpreds[key] = kbaselines[key].predict(peaks[['gc_frac','cpg_frac']])
-        logkpreds[key] = np.log2(kpreds[key].clip(0) + 1)
+        logkpreds[key] = np.log(kpreds[key].clip(0) + 1)
         fpreds[key] = np.log2((kpreds[key]+1)/(peaks['atac']+1))
     for key in logkbaselines:
         try:
-           temppreds = logkbaselines[key].predict(peaks[['gc_frac','cpg_frac', 'atac']])
+           logkpreds[key] = logkbaselines[key].predict(peaks[['gc_frac','cpg_frac', 'atac']])
         except ValueError as e:
             print(e)
-            temppreds = logkbaselines[key].predict(peaks[['gc_frac','cpg_frac']])
-        kpreds[key] = np.e ** temppreds
-        logkpreds[key] = np.log2(kpreds[key].clip(0) + 1)
+            logkpreds[key] = logkbaselines[key].predict(peaks[['gc_frac','cpg_frac']])
+        kpreds[key] = np.e ** logkpreds[key]
         fpreds[key] = np.log2((kpreds[key]+1)/(peaks['atac']+1))
 
     # predict ml models
@@ -465,7 +464,7 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
                 print(e) 
                 fpreds[key] = fmls[key].predict_generator(datagen.simple_batch(peaks, atac_only=True), steps=len(peaks)//batch_size).flatten()
         kpreds[key] = (2**(fpreds[key]))*(peaks['atac']+1)-1
-        logkpreds[key] = np.log2(kpreds[key].clip(0) + 1)
+        logkpreds[key] = np.log(kpreds[key].clip(0) + 1)
     for key in kmls:
         try:
             kpreds[key] = fmls[key].predict_generator(datagen.simple_batch(peaks), steps=len(peaks)//batch_size).flatten()
@@ -476,7 +475,7 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
             except ValueError as e:
                 print(e) 
                 kpreds[key] = fmls[key].predict_generator(datagen.simple_batch(peaks, atac_only=True), steps=len(peaks)//batch_size).flatten()
-        logkpreds[key] = np.log2(kpreds[key].clip(0) + 1)
+        logkpreds[key] = np.log(kpreds[key].clip(0) + 1)
         fpreds[key] = np.log2((kpreds[key]+1)/(peaks['atac']+1))
     for key in logkmls:
         try:
@@ -493,112 +492,122 @@ def compare_models(peaks, graph_list=['hexbin', 'bars', 'pr', 'roc'], fbaselines
 
     # combine into a dataframe
     predframe = pd.DataFrame(data={'fold_change':fpreds, 'k27act':kpreds, 'logk27act':logkpreds})
-    peaks['logk27act'] = np.log2(peaks['k27act'].clip(0) +1)
+    peaks['logk27act'] = np.log(peaks['k27act'].clip(0) +1)
 
+
+    graph_predframe(predframe, peaks, save_dir=save_dir, graph_list=graph_list)
+    return predframe
+
+def graph_predframe(predframe, peaks, save_dir={}, graph_list=['hexbin', 'bars', 'pr', 'roc']):
     # make hexbin plots
     if 'hexbin' in graph_list:
-        for name, row in predframe.iterrows():
-            f, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-            f.suptitle('Predicted vs Actual Values by {} Model'.format(name))
-            ax1.set_xlabel('Log of Normalized K27act')
-            ax1.set_ylabel('Model Prediciton for K27act')
-            ax2.set_xlabel('Log Fold Change K27act over ATAC')
-            ax2.set_ylabel('Model Prediciton for Fold Change')
-            ax1.hexbin(peaks['logk27act'], row['logk27act'], bins='log', extent=(0, 8, 0, 8))
-            ax2.hexbin(peaks['fold_change'], row['fold_change'], bins='log', extent=(-6, 6, -6, 6))
-        #    f.subplots_adjust(left=0.15, top=0.95)
-            plt.show()
-            try:
-                f.savefig(os.path.join(save_dir[name], 'hexbin.png'))
-            except KeyError as e:
-                print(e)
-
+        get_hexbins(predframe, save_dir, peaks)
     # color stuff
     prop_cycle = plt.rcParams['axes.prop_cycle']
     colors = prop_cycle.by_key()['color']
     color_iter = iter(colors)
     for name, row in predframe.iterrows():
         predframe.at[name, 'color'] = next(color_iter)
-
-    # make mse plots
     if 'bars' in graph_list:
-        f, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 10))
-        f.suptitle('Error for Model Predictions')
-        axes[0][0].set_ylabel('K27 Acetylation')
-        axes[1][0].set_ylabel('Fold Change')
-        axes[0][0].set_title('Mean Squared Error')
-        axes[0][1].set_title('Mean Absolute Error')
-
-        for name, row in predframe.iterrows():
-             predframe.at[name, 'fmse'] = np.mean((peaks['fold_change'] - row['fold_change']) **2)
-             predframe.at[name, 'fmae'] = np.mean(abs(peaks['fold_change'] - row['fold_change']))
-             predframe.at[name, 'kmse'] = np.mean((peaks['logk27act'] - row['logk27act']) **2)
-             predframe.at[name, 'kmae'] = np.mean(abs(peaks['logk27act'] - row['logk27act']))
-
-        barlist = axes[0][0].bar(range(len(predframe['kmse'])), predframe['kmse'])
-        for i in range(len(barlist)):
-            barlist[i].set_color(colors[i])
-        axes[0][0].legend(barlist, predframe.index, loc=4) 
-        barlist = axes[1][0].bar(range(len(predframe['fmse'])), predframe['fmse'])
-        for i in range(len(barlist)):
-             barlist[i].set_color(colors[i])
-        barlist = axes[0][1].bar(range(len(predframe['kmae'])), predframe['kmae'])
-        for i in range(len(barlist)):
-            barlist[i].set_color(colors[i])
-        barlist = axes[1][1].bar(range(len(predframe['fmae'])), predframe['fmae'])
-        for i in range(len(barlist)):
-            barlist[i].set_color(colors[i])
-        plt.show()
-        for name in predframe.index:
-            try:
-                f.savefig(os.path.join(save_dir[name], 'errors.png'))
-            except KeyError as e:
-                print(e)
-
-
+        get_mse(predframe, save_dir, peaks, colors)
     if 'pr' in graph_list:
-        prop_pos=sum(peaks['fold_change']>0)/len(peaks)
-        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-        f.suptitle('Fold-Change Direction Prediction')
-        ax1.set_title('Precision-Recall Curve')
-        ax2.set_title('Precision-Recall Gain Curve')
-        ax1.set_xlabel('Recall')
-        ax1.set_ylabel('Precision')
-        ax2.set_xlabel('Recall Gain')
-        ax2.set_ylabel('Precision Gain')
-        for name, row in predframe.iterrows():
-            p, r, t = precision_recall_curve(peaks['fold_change']>0, row['fold_change'])
-            ax1.plot(r, p, label=name, color=row['color'])
-            pgain, rgain = pr_gain.get_gain(p, r, prop_pos)
-            ax2.plot(rgain, pgain, label=name, color=row['color'])    
-        ax1.legend()
-        for a in ax1, ax2:
-            a.set_ylim([0.0, 1.05])
-            a.set_xlim([0.0, 1.0])
-        plt.show()
-        for name in predframe.index:
-            try:
-                f.savefig(os.path.join(save_dir[name], 'prcurve.png'))
-            except KeyError as e:
-                print(e)
-
-
+        get_pr(predframe, save_dir, peaks)
     if 'roc' in graph_list:
-        for name, row in predframe.iterrows():
-            fpr, tpr, t = roc_curve(peaks['fold_change']>0, row['fold_change'])
-            plt.plot(fpr, tpr, label=name, color=row['color'])
+        get_roc(predframe, save_dir, peaks)
 
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.ylim([0.0, 1.05])
-        plt.xlim([0.0, 1.0])
-        plt.legend()
-        plt.title('Fold-Change Direction ROC Curve')
+
+def get_hexbins(predframe, save_dir, peaks):
+    for name, row in predframe.iterrows():
+        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        f.suptitle('Predicted vs Actual Values by {} Model'.format(name))
+        ax1.set_xlabel('Log of Normalized K27act')
+        ax1.set_ylabel('Model Prediciton for K27act')
+        ax2.set_xlabel('Log Fold Change K27act over ATAC')
+        ax2.set_ylabel('Model Prediciton for Fold Change')
+        ax1.hexbin(peaks['logk27act'], row['logk27act'], bins='log', extent=(0, 8, 0, 8))
+        ax2.hexbin(peaks['fold_change'], row['fold_change'], bins='log', extent=(-6, 6, -6, 6))
         plt.show()
-        for name in predframe.index:
-            try:
-                f.savefig(os.path.join(save_dir[name], 'roc.png'))
-            except KeyError as e:
-                print(e)
+        try:
+            f.savefig(os.path.join(save_dir[name], 'hexbin.png'))
+        except KeyError as e:
+            print(e)
 
-    return predframe
+def get_mse(predframe, save_dir, peaks, colors):
+    # make mse plots
+    f, axes = plt.subplots(nrows=2, ncols=2, figsize=(10, 10))
+    f.suptitle('Error for Model Predictions')
+    axes[0][0].set_ylabel('K27 Acetylation')
+    axes[1][0].set_ylabel('Fold Change')
+    axes[0][0].set_title('Mean Squared Error')
+    axes[0][1].set_title('Mean Absolute Error')
+
+    for name, row in predframe.iterrows():
+         predframe.at[name, 'fmse'] = np.mean((peaks['fold_change'] - row['fold_change']) **2)
+         predframe.at[name, 'fmae'] = np.mean(abs(peaks['fold_change'] - row['fold_change']))
+         predframe.at[name, 'kmse'] = np.mean((peaks['logk27act'] - row['logk27act']) **2)
+         predframe.at[name, 'kmae'] = np.mean(abs(peaks['logk27act'] - row['logk27act']))
+
+    barlist = axes[0][0].bar(range(len(predframe['kmse'])), predframe['kmse'])
+    for i in range(len(barlist)):
+        barlist[i].set_color(colors[i])
+    axes[0][0].legend(barlist, predframe.index, loc=4) 
+    barlist = axes[1][0].bar(range(len(predframe['fmse'])), predframe['fmse'])
+    for i in range(len(barlist)):
+         barlist[i].set_color(colors[i])
+    barlist = axes[0][1].bar(range(len(predframe['kmae'])), predframe['kmae'])
+    for i in range(len(barlist)):
+        barlist[i].set_color(colors[i])
+    barlist = axes[1][1].bar(range(len(predframe['fmae'])), predframe['fmae'])
+    for i in range(len(barlist)):
+        barlist[i].set_color(colors[i])
+    plt.show()
+    for name in predframe.index:
+        try:
+            f.savefig(os.path.join(save_dir[name], 'errors.png'))
+        except KeyError as e:
+            print(e)
+
+def get_pr(predframe, save_dir, peaks):
+    prop_pos=sum(peaks['fold_change']>0)/len(peaks)
+    f, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+    f.suptitle('Fold-Change Direction Prediction')
+    ax1.set_title('Precision-Recall Curve')
+    ax2.set_title('Precision-Recall Gain Curve')
+    ax1.set_xlabel('Recall')
+    ax1.set_ylabel('Precision')
+    ax2.set_xlabel('Recall Gain')
+    ax2.set_ylabel('Precision Gain')
+    for name, row in predframe.iterrows():
+        p, r, t = precision_recall_curve(peaks['fold_change']>0, row['fold_change'])
+        ax1.plot(r, p, label=name, color=row['color'])
+        pgain, rgain = pr_gain.get_gain(p, r, prop_pos)
+        ax2.plot(rgain, pgain, label=name, color=row['color'])    
+    ax1.legend()
+    for a in ax1, ax2:
+        a.set_ylim([0.0, 1.05])
+        a.set_xlim([0.0, 1.0])
+    plt.show()
+    for name in predframe.index:
+        try:
+           f.savefig(os.path.join(save_dir[name], 'prcurve.png'))
+        except KeyError as e:
+            print(e)
+
+def get_roc(predframe, save_dir, peaks):
+    for name, row in predframe.iterrows():
+        fpr, tpr, t = roc_curve(peaks['fold_change']>0, row['fold_change'])
+        plt.plot(fpr, tpr, label=name, color=row['color'])
+
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.ylim([0.0, 1.05])
+    plt.xlim([0.0, 1.0])
+    plt.legend()
+    plt.title('Fold-Change Direction ROC Curve')
+    plt.show()
+    for name in predframe.index:
+        try:
+            plt.savefig(os.path.join(save_dir[name], 'roc.png'))
+        except KeyError as e:
+            print(e)
+

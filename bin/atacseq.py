@@ -98,6 +98,9 @@ class Sequence(object):
         """Plot a sequence logo from start to end."""
         viz_sequence.plot_weights(self.seq[start:end])
 
+    def model_input(self):
+        return self.seq
+
     def sequential_mutant_gen(self):
         """Generate sequences with a blank mutation."""
         for idx in range(self.seq.shape[0]):
